@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -58,7 +59,15 @@ builder.Services
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // Cualquier endpoint sin [Authorize]/[AllowAnonymous] explícito exige el rol APIWEB por defecto,
+    // para que los controllers nuevos queden protegidos aunque alguien olvide anotarlos.
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .RequireRole("APIWEB")
+        .Build();
+});
 
 var app = builder.Build();
 

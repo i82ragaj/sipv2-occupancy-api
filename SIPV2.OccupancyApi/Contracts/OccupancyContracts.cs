@@ -1,12 +1,13 @@
 namespace SIPV2.OccupancyApi.Contracts;
 
-/// <summary>Entrada del catálogo de parkings (MDParking).</summary>
-public record ParkingDto(string Id, string Name, string Type, bool Active);
+/// <summary>Petición para filtrar la ocupación actual por un listado de ids de contador.</summary>
+public record CurrentOccupancyByCounterIdsRequest(IReadOnlyList<string> CounterIds);
 
 /// <summary>Ocupación actual de un parking/contador (vista VOccupationActual).</summary>
 public record CurrentOccupancyDto(
-    string ParkingCode,
+    string ParkingId,
     string ParkingName,
+    string CounterId,
     string CounterCode,
     string? CounterName,
     short? Capacity,

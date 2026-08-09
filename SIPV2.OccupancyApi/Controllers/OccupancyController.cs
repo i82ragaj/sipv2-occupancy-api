@@ -6,7 +6,7 @@ using SIPV2.OccupancyApi.Contracts;
 
 namespace SIPV2.OccupancyApi.Controllers;
 
-[Authorize]
+[Authorize(Roles = "APIWEB")]
 [ApiController]
 [Route("api/[controller]")]
 public class OccupancyController : ControllerBase
@@ -18,52 +18,67 @@ public class OccupancyController : ControllerBase
         _db = db;
     }
 
-    /// <summary>Catálogo de parkings (MDParking).</summary>
-    /// <param name="onlyActive">Si es true (por defecto), devuelve solo los parkings activos.</param>
-    [HttpGet("parkings")]
-    [ProducesResponseType(typeof(IEnumerable<ParkingDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<ParkingDto>>> GetParkings([FromQuery] bool onlyActive = true)
-    {
-        var query = _db.Mdparkings.AsNoTracking();
-        if (onlyActive)
-        {
-            query = query.Where(p => p.Active);
-        }
-
-        var parkings = await query
-            .OrderBy(p => p.Name)
-            .Select(p => new ParkingDto(p.Id, p.Name ?? p.Id, p.Type, p.Active))
-            .ToListAsync();
-
-        return Ok(parkings);
-    }
-
     /// <summary>Ocupación actual por contador/parking (vista VOccupationActual).</summary>
-    /// <param name="parkingCode">Filtra por código de parking (MDParking.ID); opcional.</param>
+    /// <param name="parkingId">Filtra por id de parking (MDParking.ID); opcional.</param>
+    /// <param name="counterName">Filtra por nombre de contador (coincidencia parcial, sin distinguir mayúsculas/minúsculas); opcional.</param>
     [HttpGet("current")]
     [ProducesResponseType(typeof(IEnumerable<CurrentOccupancyDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<CurrentOccupancyDto>>> GetCurrentOccupancy([FromQuery] string? parkingCode = null)
+    public async Task<ActionResult<IEnumerable<CurrentOccupancyDto>>> GetCurrentOccupancy(
+        [FromQuery] string? parkingId = null,
+        [FromQuery] string? counterName = null)
     {
         var query = _db.VoccupationActuals.AsNoTracking();
-        if (!string.IsNullOrWhiteSpace(parkingCode))
+        if (!string.IsNullOrWhiteSpace(parkingId))
         {
-            query = query.Where(o => o.ParkingCode == parkingCode);
+            query = query.Where(o => o.ParkingId == parkingId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(counterName))
+        {
+            query = query.Where(o => o.CounterName != null && EF.Functions.Like(o.CounterName, $"%{counterName}%"));
         }
 
         var occupancy = await query
             .OrderBy(o => o.ParkingName)
             .ThenBy(o => o.CounterName)
-            .Select(o => new CurrentOccupancyDto(
-                o.ParkingCode,
-                o.ParkingName,
-                o.CounterCode,
-                o.CounterName,
-                o.Capacity,
-                o.CurrentLevel,
-                o.Perc,
-                o.Updated))
+            .Select(ToDto)
             .ToListAsync();
 
         return Ok(occupancy);
     }
+
+    /// <summary>Ocupación actual de un listado concreto de contadores, por su CounterId.</summary>
+    [HttpPost("current")]
+    [ProducesResponseType(typeof(IEnumerable<CurrentOccupancyDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IEnumerable<CurrentOccupancyDto>>> GetCurrentOccupancyByCounterIds(
+        [FromBody] CurrentOccupancyByCounterIdsRequest request)
+    {
+        var counterIds = request.CounterIds?.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList() ?? [];
+        if (counterIds.Count == 0)
+        {
+            return BadRequest("counterIds no puede estar vacío.");
+        }
+
+        var occupancy = await _db.VoccupationActuals
+            .AsNoTracking()
+            .Where(o => counterIds.Contains(o.CounterId))
+            .OrderBy(o => o.ParkingName)
+            .ThenBy(o => o.CounterName)
+            .Select(ToDto)
+            .ToListAsync();
+
+        return Ok(occupancy);
+    }
+
+    private static readonly System.Linq.Expressions.Expression<Func<VoccupationActual, CurrentOccupancyDto>> ToDto = o => new CurrentOccupancyDto(
+        o.ParkingId,
+        o.ParkingName ?? o.ParkingId,
+        o.CounterId,
+        o.CounterCode,
+        o.CounterName,
+        o.Capacity,
+        o.CurrentLevel,
+        o.Perc,
+        o.Updated);
 }
