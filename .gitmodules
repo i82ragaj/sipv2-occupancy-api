@@ -1,0 +1,3 @@
+[submodule "SIPV2.DataModels"]
+	path = SIPV2.DataModels
+	url = https://github.com/i82ragaj/SIPV2.DataModels

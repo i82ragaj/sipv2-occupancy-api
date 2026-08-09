@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SIPV2.DataModels/SIPV2.DataModels.csproj" />
+  <Project Path="SIPV2.OccupancyApi/SIPV2.OccupancyApi.csproj" />
+</Solution>
