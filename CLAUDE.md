@@ -19,11 +19,16 @@ dotnet ef dbcontext scaffold $cs Microsoft.EntityFrameworkCore.SqlServer `
     --namespace SIPV2.DataModels --context-namespace SIPV2.DataModels `
     --project "SIPV2.DataModels\SIPV2.DataModels.csproj" `
     --data-annotations --no-onconfiguring --force
+
+# Run all unit tests
+dotnet test SIPV2.OccupancyApi.Tests/SIPV2.OccupancyApi.Tests.csproj
+
+# Run a single test (by fully-qualified name or a filter expression)
+dotnet test SIPV2.OccupancyApi.Tests/SIPV2.OccupancyApi.Tests.csproj --filter "FullyQualifiedName~LoginControllerTests.Login_WithValidCredentials_ReturnsTokenAndRoles"
 ```
 
 > The solution file uses the newer `.slnx` format, not `.sln`.
 > PowerShell execution policy may block `scaffold.ps1` — run the scaffold command inline as shown above instead.
-> No test project exists yet.
 
 ### Gotchas learned the hard way
 
@@ -44,9 +49,16 @@ SIPV2.OccupancyApi/      # ASP.NET Core 10 Web API — the actual "occupancy API
 ├── Program.cs           # DI, JWT bearer auth, Swagger, middleware pipeline
 ├── Controllers/
 │   ├── LoginController.cs      # POST /api/login — issues JWTs, [AllowAnonymous]
-│   └── OccupancyController.cs  # GET endpoints, [Authorize]
-├── Services/JwtTokenService.cs # Builds the signed JWT (HS256) from Jwt:* config
+│   ├── ParkingController.cs    # GET /api/parking, GET /api/parking/{id} — [Authorize(Roles = "APIWEB")]
+│   └── OccupancyController.cs  # GET/POST /api/occupancy/current — [Authorize(Roles = "APIWEB")]
+├── Services/
+│   ├── JwtTokenService.cs      # Builds the signed JWT (HS256) from Jwt:* config
+│   ├── EfUserRepository.cs     # IUserRepository — wraps AppDbContext.Mdusers
+│   ├── EfParkingRepository.cs  # IParkingRepository — wraps AppDbContext.Mdparkings
+│   └── EfOccupancyRepository.cs # IOccupancyRepository — wraps AppDbContext.VoccupationActuals
 └── Contracts/            # Request/response DTOs — never expose EF entities directly
+
+SIPV2.OccupancyApi.Tests/ # xUnit — controllers tested in-process against fake repositories
 ```
 
 ### `SIPV2.DataModels` is a git submodule
@@ -73,11 +85,15 @@ The database uses mixed prefixes; EF scaffold maps them to Pascal-case C# names:
 - `MdparkingStatus` mirrors `Mdparking`'s import-status fields (`LastImported*`, `Active`, audit columns) as a separate keyless table
 - All view entities are configured with `.ToView(...)` and `HasNoKey()` in `OnModelCreating`
 
+### Data access: repository layer, not raw `AppDbContext` in controllers
+
+Controllers depend on `IUserRepository` / `IParkingRepository` / `IOccupancyRepository`, not `AppDbContext` directly. The `Ef*Repository` implementations (in `Services/`) hold all the LINQ/EF-specific code; controllers only orchestrate + map to `Contracts/` DTOs. This exists specifically so controllers can be unit-tested with plain in-memory fakes (see Testing below) instead of a real or InMemory-provider `AppDbContext` — EF Core's `[Keyless]` types (like `VoccupationActual`, mapped from the `VOccupationActual` view) can't be seeded via `Add`/`SaveChanges` on *any* provider, which made `AppDbContext`-based testing of occupancy code impossible before this layer existed.
+
 ### Auth flow (`SIPV2.OccupancyApi`)
 
-1. `POST /api/login` looks up `Mduser` by `Login` (must be `Active`), verifies `Password` with `BCrypt.Net.BCrypt.Verify` against the stored hash, and collects role names via `MduserRol → Mdrol`.
+1. `POST /api/login` looks up `Mduser` by `Login` via `IUserRepository` (must be `Active`), verifies `Password` with `BCrypt.Net.BCrypt.Verify` against the stored hash, and collects role names via `MduserRol → Mdrol`.
 2. `JwtTokenService` signs an HS256 JWT (claims: `sub`=UserId, `unique_name`=Login, `role`=each role name) using the `Jwt:Key`/`Issuer`/`Audience`/`ExpiryMinutes` config section.
-3. `Program.cs` wires `AddJwtBearer` with matching `TokenValidationParameters`; every other controller (e.g. `OccupancyController`) is `[Authorize]` by default and expects `Authorization: Bearer <token>`.
+3. `Program.cs` wires `AddJwtBearer` with matching `TokenValidationParameters`, plus an `AddAuthorization` **`FallbackPolicy`** requiring `RequireRole("APIWEB")` — any endpoint with no explicit `[Authorize]`/`[AllowAnonymous]` is protected by default. `ParkingController` and `OccupancyController` additionally declare `[Authorize(Roles = "APIWEB")]` explicitly (needed because having *any* `[Authorize]` attribute opts an endpoint out of the fallback policy, so the role requirement has to be spelled out again there).
 4. There is no user-registration/password-reset endpoint — accounts are seeded directly in `MDUser`/`MDRol`/`MDUserRol` via SQL, with the password pre-hashed with `BCrypt.Net.BCrypt.HashPassword(...)`.
 
 ### Configuration split
@@ -88,3 +104,11 @@ The database uses mixed prefixes; EF scaffold maps them to Pascal-case C# names:
 ### OpenAPI/Swagger
 
 Uses **Swashbuckle.AspNetCore** (not the native `Microsoft.AspNetCore.OpenApi` template default, which was removed) — `AddSwaggerGen`/`UseSwagger`/`UseSwaggerUI` in `Program.cs`, with a `Bearer` security definition wired via `OpenApiSecuritySchemeReference` (Microsoft.OpenApi 2.x's newer, non-`Models`-namespaced API — the `Reference` property on `OpenApiSecurityScheme` no longer exists). `Microsoft.OpenApi` is pinned to `2.7.5` directly (not left to float) to avoid a known high-severity NU1903 advisory in the `2.0.0` transitive version Swashbuckle would otherwise pull in.
+
+### Testing (`SIPV2.OccupancyApi.Tests`)
+
+xUnit project referencing `SIPV2.OccupancyApi` directly and instantiating controllers in-process (no `WebApplicationFactory`/HTTP round-trip, no database, no `AppDbContext` at all). Each controller gets hand-written fakes from `Tests/Fakes/` (`FakeUserRepository`, `FakeParkingRepository`, `FakeOccupancyRepository` — each just a `List<T>` behind the matching `I*Repository` interface) instead of EF Core InMemory.
+
+- All three controllers (`LoginController`, `ParkingController`, `OccupancyController`) are fully covered, including the paths that used to be untestable pre-repository-layer (`GetParkingDetail`, both `Occupancy/current` overloads) — the fakes sidestep EF's `[Keyless]`-entity seeding limitation entirely since they don't use EF Core.
+- `JwtTokenService` is tested in isolation with an in-memory `IConfiguration` (no repository involved).
+- When adding a new repository method, add it to both the real `Ef*Repository` and the corresponding fake — there's no compiler-enforced link between them beyond the shared interface.
