@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using SIPV2.DataModels;
 using SIPV2.OccupancyApi.Contracts;
+using SIPV2.OccupancyApi.Services;
 
 namespace SIPV2.OccupancyApi.Controllers;
 
@@ -11,11 +11,13 @@ namespace SIPV2.OccupancyApi.Controllers;
 [Route("api/[controller]")]
 public class ParkingController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IParkingRepository _parkings;
+    private readonly IOccupancyRepository _occupancy;
 
-    public ParkingController(AppDbContext db)
+    public ParkingController(IParkingRepository parkings, IOccupancyRepository occupancy)
     {
-        _db = db;
+        _parkings = parkings;
+        _occupancy = occupancy;
     }
 
     /// <summary>Catálogo de parkings (MDParking).</summary>
@@ -23,13 +25,8 @@ public class ParkingController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<ParkingDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<ParkingDto>>> GetParkings()
     {
-        var parkings = await _db.Mdparkings
-            .AsNoTracking()
-            .OrderBy(p => p.Name)
-            .Select(p => new ParkingDto(p.Id, p.Name ?? p.Id))
-            .ToListAsync();
-
-        return Ok(parkings);
+        var parkings = await _parkings.GetAllAsync();
+        return Ok(parkings.Select(p => new ParkingDto(p.Id, p.Name ?? p.Id)));
     }
 
     /// <summary>Detalle de un parking: código, nombre y el listado completo de sus contadores (vista VOccupationActual).</summary>
@@ -39,26 +36,16 @@ public class ParkingController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ParkingDetailDto>> GetParkingDetail(string id)
     {
-        var counters = await _db.VoccupationActuals
-            .AsNoTracking()
-            .Where(o => o.ParkingId == id)
-            .OrderBy(o => o.CounterName)
-            .Select(o => new CounterDto(o.CounterId, o.CounterCode, o.CounterName, o.Capacity, o.CurrentLevel, o.Perc, o.Updated))
-            .ToListAsync();
+        var counters = await _occupancy.GetByParkingIdAsync(id);
 
         if (counters.Count > 0)
         {
-            var parkingName = await _db.VoccupationActuals
-                .AsNoTracking()
-                .Where(o => o.ParkingId == id)
-                .Select(o => o.ParkingName)
-                .FirstAsync();
-
-            return Ok(new ParkingDetailDto(id, parkingName ?? id, counters));
+            var parkingName = counters[0].ParkingName ?? id;
+            return Ok(new ParkingDetailDto(id, parkingName, counters.Select(ToCounterDto).ToList()));
         }
 
         // Sin contadores en la vista de ocupación: comprobamos si el parking existe siquiera.
-        var parking = await _db.Mdparkings.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
+        var parking = await _parkings.GetByIdAsync(id);
         if (parking is null)
         {
             return NotFound();
@@ -66,4 +53,7 @@ public class ParkingController : ControllerBase
 
         return Ok(new ParkingDetailDto(parking.Id, parking.Name ?? parking.Id, []));
     }
+
+    private static CounterDto ToCounterDto(VoccupationActual o) =>
+        new(o.CounterId, o.CounterCode, o.CounterName, o.Capacity, o.CurrentLevel, o.Perc, o.Updated);
 }

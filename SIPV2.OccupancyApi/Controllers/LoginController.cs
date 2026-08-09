@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using SIPV2.DataModels;
 using SIPV2.OccupancyApi.Contracts;
 using SIPV2.OccupancyApi.Services;
 
@@ -11,12 +9,12 @@ namespace SIPV2.OccupancyApi.Controllers;
 [Route("api/[controller]")]
 public class LoginController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IUserRepository _users;
     private readonly IJwtTokenService _jwtTokenService;
 
-    public LoginController(AppDbContext db, IJwtTokenService jwtTokenService)
+    public LoginController(IUserRepository users, IJwtTokenService jwtTokenService)
     {
-        _db = db;
+        _users = users;
         _jwtTokenService = jwtTokenService;
     }
 
@@ -33,10 +31,7 @@ public class LoginController : ControllerBase
             return BadRequest("Login y password son obligatorios.");
         }
 
-        var user = await _db.Mdusers
-            .Include(u => u.MduserRols)
-                .ThenInclude(ur => ur.Rol)
-            .FirstOrDefaultAsync(u => u.Login == request.Login && u.Active);
+        var user = await _users.FindActiveByLoginAsync(request.Login);
 
         if (user is null || user.Password is null || !VerifyPassword(request.Password, user.Password))
         {

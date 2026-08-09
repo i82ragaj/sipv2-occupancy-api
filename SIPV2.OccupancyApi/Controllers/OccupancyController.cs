@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using SIPV2.DataModels;
 using SIPV2.OccupancyApi.Contracts;
+using SIPV2.OccupancyApi.Services;
 
 namespace SIPV2.OccupancyApi.Controllers;
 
@@ -11,11 +11,11 @@ namespace SIPV2.OccupancyApi.Controllers;
 [Route("api/[controller]")]
 public class OccupancyController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IOccupancyRepository _occupancy;
 
-    public OccupancyController(AppDbContext db)
+    public OccupancyController(IOccupancyRepository occupancy)
     {
-        _db = db;
+        _occupancy = occupancy;
     }
 
     /// <summary>Ocupación actual por contador/parking (vista VOccupationActual).</summary>
@@ -27,24 +27,8 @@ public class OccupancyController : ControllerBase
         [FromQuery] string? parkingId = null,
         [FromQuery] string? counterName = null)
     {
-        var query = _db.VoccupationActuals.AsNoTracking();
-        if (!string.IsNullOrWhiteSpace(parkingId))
-        {
-            query = query.Where(o => o.ParkingId == parkingId);
-        }
-
-        if (!string.IsNullOrWhiteSpace(counterName))
-        {
-            query = query.Where(o => o.CounterName != null && EF.Functions.Like(o.CounterName, $"%{counterName}%"));
-        }
-
-        var occupancy = await query
-            .OrderBy(o => o.ParkingName)
-            .ThenBy(o => o.CounterName)
-            .Select(ToDto)
-            .ToListAsync();
-
-        return Ok(occupancy);
+        var occupancy = await _occupancy.GetCurrentAsync(parkingId, counterName);
+        return Ok(occupancy.Select(ToDto));
     }
 
     /// <summary>Ocupación actual de un listado concreto de contadores, por su CounterId.</summary>
@@ -60,18 +44,11 @@ public class OccupancyController : ControllerBase
             return BadRequest("counterIds no puede estar vacío.");
         }
 
-        var occupancy = await _db.VoccupationActuals
-            .AsNoTracking()
-            .Where(o => counterIds.Contains(o.CounterId))
-            .OrderBy(o => o.ParkingName)
-            .ThenBy(o => o.CounterName)
-            .Select(ToDto)
-            .ToListAsync();
-
-        return Ok(occupancy);
+        var occupancy = await _occupancy.GetByCounterIdsAsync(counterIds);
+        return Ok(occupancy.Select(ToDto));
     }
 
-    private static readonly System.Linq.Expressions.Expression<Func<VoccupationActual, CurrentOccupancyDto>> ToDto = o => new CurrentOccupancyDto(
+    private static CurrentOccupancyDto ToDto(VoccupationActual o) => new(
         o.ParkingId,
         o.ParkingName ?? o.ParkingId,
         o.CounterId,
