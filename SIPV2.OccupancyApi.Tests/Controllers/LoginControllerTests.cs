@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using SIPV2.DataModels;
 using SIPV2.OccupancyApi.Contracts;
 using SIPV2.OccupancyApi.Controllers;
@@ -51,7 +52,7 @@ public class LoginControllerTests
     {
         var users = new FakeUserRepository();
         SeedUser(users, "gooduser", "CorrectPass1!");
-        var controller = new LoginController(users, CreateJwtTokenService());
+        var controller = new LoginController(users, CreateJwtTokenService(), NullLogger<LoginController>.Instance);
 
         var result = await controller.Login(new LoginRequest("gooduser", "CorrectPass1!"));
 
@@ -67,7 +68,7 @@ public class LoginControllerTests
     {
         var users = new FakeUserRepository();
         SeedUser(users, "gooduser", "CorrectPass1!");
-        var controller = new LoginController(users, CreateJwtTokenService());
+        var controller = new LoginController(users, CreateJwtTokenService(), NullLogger<LoginController>.Instance);
 
         var result = await controller.Login(new LoginRequest("gooduser", "WrongPassword"));
 
@@ -77,7 +78,7 @@ public class LoginControllerTests
     [Fact]
     public async Task Login_WithUnknownLogin_ReturnsUnauthorized()
     {
-        var controller = new LoginController(new FakeUserRepository(), CreateJwtTokenService());
+        var controller = new LoginController(new FakeUserRepository(), CreateJwtTokenService(), NullLogger<LoginController>.Instance);
 
         var result = await controller.Login(new LoginRequest("no-existe", "cualquiera"));
 
@@ -89,7 +90,7 @@ public class LoginControllerTests
     {
         var users = new FakeUserRepository();
         SeedUser(users, "inactivo", "CorrectPass1!", active: false);
-        var controller = new LoginController(users, CreateJwtTokenService());
+        var controller = new LoginController(users, CreateJwtTokenService(), NullLogger<LoginController>.Instance);
 
         var result = await controller.Login(new LoginRequest("inactivo", "CorrectPass1!"));
 
@@ -102,7 +103,7 @@ public class LoginControllerTests
     [InlineData(null, null)]
     public async Task Login_WithMissingCredentials_ReturnsBadRequest(string? login, string? password)
     {
-        var controller = new LoginController(new FakeUserRepository(), CreateJwtTokenService());
+        var controller = new LoginController(new FakeUserRepository(), CreateJwtTokenService(), NullLogger<LoginController>.Instance);
 
         var result = await controller.Login(new LoginRequest(login!, password!));
 
@@ -114,7 +115,7 @@ public class LoginControllerTests
     {
         var users = new FakeUserRepository();
         SeedUser(users, "sinrol", "CorrectPass1!", roleName: null);
-        var controller = new LoginController(users, CreateJwtTokenService());
+        var controller = new LoginController(users, CreateJwtTokenService(), NullLogger<LoginController>.Instance);
 
         var result = await controller.Login(new LoginRequest("sinrol", "CorrectPass1!"));
 
