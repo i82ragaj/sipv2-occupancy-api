@@ -6,7 +6,7 @@ using SIPV2.OccupancyApi.Services;
 
 namespace SIPV2.OccupancyApi.Controllers;
 
-[Authorize(Roles = "APIWEB")]
+[Authorize(Roles = "apiweb,admin")]
 [ApiController]
 [Route("api/[controller]")]
 public class ParkingController : ControllerBase

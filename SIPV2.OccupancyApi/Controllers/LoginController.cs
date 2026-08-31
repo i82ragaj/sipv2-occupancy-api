@@ -11,11 +11,13 @@ public class LoginController : ControllerBase
 {
     private readonly IUserRepository _users;
     private readonly IJwtTokenService _jwtTokenService;
+    private readonly ILogger<LoginController> _logger;
 
-    public LoginController(IUserRepository users, IJwtTokenService jwtTokenService)
+    public LoginController(IUserRepository users, IJwtTokenService jwtTokenService, ILogger<LoginController> logger)
     {
         _users = users;
         _jwtTokenService = jwtTokenService;
+        _logger = logger;
     }
 
     /// <summary>Autentica un usuario de MDUser y devuelve un JWT si las credenciales son válidas.</summary>
@@ -35,6 +37,7 @@ public class LoginController : ControllerBase
 
         if (user is null || user.Password is null || !VerifyPassword(request.Password, user.Password))
         {
+            _logger.LogWarning("Login fallido para el usuario '{Login}': credenciales inválidas o usuario inactivo.", request.Login);
             return Unauthorized("Credenciales inválidas.");
         }
 
@@ -45,6 +48,8 @@ public class LoginController : ControllerBase
             .ToList();
 
         var (token, expiresAtUtc) = _jwtTokenService.GenerateToken(user, roles);
+
+        _logger.LogInformation("Login correcto para el usuario '{Login}' con roles [{Roles}].", user.Login, string.Join(", ", roles));
 
         return Ok(new LoginResponse(token, expiresAtUtc, user.Login, roles));
     }

@@ -49,8 +49,8 @@ SIPV2.OccupancyApi/      # ASP.NET Core 10 Web API — the actual "occupancy API
 ├── Program.cs           # DI, JWT bearer auth, Swagger, middleware pipeline
 ├── Controllers/
 │   ├── LoginController.cs      # POST /api/login — issues JWTs, [AllowAnonymous]
-│   ├── ParkingController.cs    # GET /api/parking, GET /api/parking/{id} — [Authorize(Roles = "APIWEB")]
-│   └── OccupancyController.cs  # GET/POST /api/occupancy/current — [Authorize(Roles = "APIWEB")]
+│   ├── ParkingController.cs    # GET /api/parking, GET /api/parking/{id} — [Authorize(Roles = "apiweb,admin")]
+│   └── OccupancyController.cs  # GET/POST /api/occupancy/current — [Authorize(Roles = "apiweb,admin")]
 ├── Services/
 │   ├── JwtTokenService.cs      # Builds the signed JWT (HS256) from Jwt:* config
 │   ├── EfUserRepository.cs     # IUserRepository — wraps AppDbContext.Mdusers
@@ -93,8 +93,14 @@ Controllers depend on `IUserRepository` / `IParkingRepository` / `IOccupancyRepo
 
 1. `POST /api/login` looks up `Mduser` by `Login` via `IUserRepository` (must be `Active`), verifies `Password` with `BCrypt.Net.BCrypt.Verify` against the stored hash, and collects role names via `MduserRol → Mdrol`.
 2. `JwtTokenService` signs an HS256 JWT (claims: `sub`=UserId, `unique_name`=Login, `role`=each role name) using the `Jwt:Key`/`Issuer`/`Audience`/`ExpiryMinutes` config section.
-3. `Program.cs` wires `AddJwtBearer` with matching `TokenValidationParameters`, plus an `AddAuthorization` **`FallbackPolicy`** requiring `RequireRole("APIWEB")` — any endpoint with no explicit `[Authorize]`/`[AllowAnonymous]` is protected by default. `ParkingController` and `OccupancyController` additionally declare `[Authorize(Roles = "APIWEB")]` explicitly (needed because having *any* `[Authorize]` attribute opts an endpoint out of the fallback policy, so the role requirement has to be spelled out again there).
+3. `Program.cs` wires `AddJwtBearer` with matching `TokenValidationParameters`, plus an `AddAuthorization` **`FallbackPolicy`** requiring `RequireRole("apiweb", "admin")` — any endpoint with no explicit `[Authorize]`/`[AllowAnonymous]` is protected by default. `ParkingController` and `OccupancyController` additionally declare `[Authorize(Roles = "apiweb,admin")]` explicitly (needed because having *any* `[Authorize]` attribute opts an endpoint out of the fallback policy, so the role requirement has to be spelled out again there). **Role names are case-sensitive** in ASP.NET Core's role check (`ClaimsPrincipal.IsInRole` compares the claim value with ordinal, case-sensitive semantics) and must match `MDRol.Name` exactly — in this DB that's lowercase (`apiweb`, `admin`), not `APIWEB`/`Admin`.
 4. There is no user-registration/password-reset endpoint — accounts are seeded directly in `MDUser`/`MDRol`/`MDUserRol` via SQL, with the password pre-hashed with `BCrypt.Net.BCrypt.HashPassword(...)`.
+
+### Logging (Serilog)
+
+`Program.cs` replaces the default logging providers with **Serilog** (`Serilog.AspNetCore` + `Serilog.Sinks.File`), wired via `builder.Host.UseSerilog(...)` and a bootstrap logger that covers startup failures. Only business events are logged: login success/failure (`LoginController`), unauthorized access — a small pipeline middleware logs any response that comes back 401/403 — and unhandled exceptions (logged automatically by the ASP.NET Core hosting layer, not suppressed since only `Microsoft`/`Microsoft.EntityFrameworkCore` are overridden down to `Warning`).
+
+**All levels and sinks are config-driven**, not hardcoded — see the `Serilog` section in `appsettings.json` (`MinimumLevel`, and `WriteTo` for the Console and File sinks, including the log file's path/rolling interval/retained-file count). `Program.cs` itself only adds `Enrich.FromLogContext()` and calls `ReadFrom.Configuration(...)`; change the log file path or retention by editing `appsettings.json`/`appsettings.Development.json`, no rebuild needed beyond a restart. Log files land in `logs/` relative to the content root (already covered by `.gitignore`'s `*.log`).
 
 ### Configuration split
 
@@ -104,6 +110,8 @@ Controllers depend on `IUserRepository` / `IParkingRepository` / `IOccupancyRepo
 ### OpenAPI/Swagger
 
 Uses **Swashbuckle.AspNetCore** (not the native `Microsoft.AspNetCore.OpenApi` template default, which was removed) — `AddSwaggerGen`/`UseSwagger`/`UseSwaggerUI` in `Program.cs`, with a `Bearer` security definition wired via `OpenApiSecuritySchemeReference` (Microsoft.OpenApi 2.x's newer, non-`Models`-namespaced API — the `Reference` property on `OpenApiSecurityScheme` no longer exists). `Microsoft.OpenApi` is pinned to `2.7.5` directly (not left to float) to avoid a known high-severity NU1903 advisory in the `2.0.0` transitive version Swashbuckle would otherwise pull in.
+
+Swagger UI is served in `Development` unconditionally, and in any other environment only if `Swagger:Enabled=true` in config (default `false` in `appsettings.json`) — lets a non-Development deployment (e.g. an IIS QA server) opt in via an env var (`Swagger__Enabled=true` on the app pool) without exposing it on a real production deployment by default.
 
 ### Testing (`SIPV2.OccupancyApi.Tests`)
 
